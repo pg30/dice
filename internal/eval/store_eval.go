@@ -1,6 +1,7 @@
 package eval
 
 import (
+	"math"
 	"strconv"
 	"strings"
 
@@ -315,4 +316,170 @@ func evalSETEX(args []string, store *dstore.Store) *EvalResponse {
 	newArgs := []string{key, value, Ex, args[1]}
 
 	return evalSET(newArgs, store)
+}
+
+func evalINCRNew(args []string, store *dstore.Store) *EvalResponse {
+	if len(args) != 1 {
+		return &EvalResponse{
+			Result: nil,
+			Error:  diceerrors.ErrWrongArgumentCount("INCR"),
+		}
+	}
+
+	return incrDecrCmdNew(args, 1, store)
+}
+
+func evalINCRBYNew(args []string, store *dstore.Store) *EvalResponse {
+	if len(args) != 2 {
+		return &EvalResponse{
+			Result: nil,
+			Error:  diceerrors.ErrWrongArgumentCount("INCRBY"),
+		}
+	}
+
+	incrAmount, err := strconv.ParseInt(args[1], 10, 64)
+	if err != nil {
+		return &EvalResponse{
+			Result: nil,
+			Error:  diceerrors.ErrIntegerOutOfRange,
+		}
+	}
+	return incrDecrCmdNew(args, incrAmount, store)
+}
+
+func evalDECRNew(args []string, store *dstore.Store) *EvalResponse {
+	if len(args) != 1 {
+		return &EvalResponse{
+			Result: nil,
+			Error:  diceerrors.ErrWrongArgumentCount("DECR"),
+		}
+	}
+	return incrDecrCmdNew(args, -1, store)
+}
+
+func evalDECRBYNew(args []string, store *dstore.Store) *EvalResponse {
+	if len(args) != 2 {
+		return &EvalResponse{
+			Result: nil,
+			Error:  diceerrors.ErrWrongArgumentCount("DECRBY"),
+		}
+	}
+	decrAmount, err := strconv.ParseInt(args[1], 10, 64)
+	if err != nil {
+		return &EvalResponse{
+			Result: nil,
+			Error:  diceerrors.ErrIntegerOutOfRange,
+		}
+	}
+	return incrDecrCmdNew(args, -decrAmount, store)
+}
+
+func incrDecrCmdNew(args []string, incr int64, store *dstore.Store) *EvalResponse {
+	key := args[0]
+	obj := store.Get(key)
+	if obj == nil {
+		obj = store.NewObj(int64(0), -1, object.ObjTypeInt, object.ObjEncodingInt)
+		store.Put(key, obj)
+	}
+
+	// TODO: return wrong type errors for types other than KV
+	if err := object.AssertType(obj.TypeEncoding, object.ObjTypeInt); err != nil {
+		return &EvalResponse{
+			Result: nil,
+			Error:  diceerrors.ErrIntegerOutOfRange,
+		}
+	}
+
+	if err := object.AssertEncoding(obj.TypeEncoding, object.ObjEncodingInt); err != nil {
+		return &EvalResponse{
+			Result: nil,
+			Error:  diceerrors.ErrIntegerOutOfRange,
+		}
+	}
+
+	i, _ := obj.Value.(int64)
+	if (incr < 0 && i < 0 && incr < (math.MinInt64-i)) ||
+		(incr > 0 && i > 0 && incr > (math.MaxInt64-i)) {
+		return &EvalResponse{
+			Result: nil,
+			Error:  diceerrors.ErrOverflow,
+		}
+	}
+
+	i += incr
+	obj.Value = i
+	return &EvalResponse{
+		Result: i,
+		Error:  nil,
+	}
+}
+
+func evalINCRBYFLOATNew(args []string, store *dstore.Store) *EvalResponse {
+	if len(args) != 2 {
+		return &EvalResponse{
+			Result: nil,
+			Error:  diceerrors.ErrWrongArgumentCount("INCRBYFLOAT"),
+		}
+	}
+	incr, err := strconv.ParseFloat(strings.TrimSpace(args[1]), 64)
+	if err != nil {
+		return &EvalResponse{
+			Result: nil,
+			Error:  diceerrors.ErrInvalidNumberFormat,
+		}
+	}
+	return incrByFloatCmdNew(args, incr, store)
+}
+
+func incrByFloatCmdNew(args []string, incr float64, store *dstore.Store) *EvalResponse {
+	key := args[0]
+	obj := store.Get(key)
+
+	if obj == nil {
+		strValue := formatFloat(incr, false)
+		oType, oEnc := deduceTypeEncoding(strValue)
+		obj = store.NewObj(strValue, -1, oType, oEnc)
+		store.Put(key, obj)
+		return &EvalResponse{
+			Result: strValue,
+			Error:  nil,
+		}
+	}
+
+	errString := object.AssertType(obj.TypeEncoding, object.ObjTypeString)
+	errInt := object.AssertType(obj.TypeEncoding, object.ObjTypeInt)
+	if errString != nil && errInt != nil {
+		return &EvalResponse{
+			Result: nil,
+			Error:  diceerrors.ErrWrongTypeOperation,
+		}
+	}
+
+	value, err := floatValue(obj.Value)
+	if err != nil {
+		return &EvalResponse{
+			Result: nil,
+			Error:  diceerrors.ErrWrongTypeOperation,
+		}
+	}
+	value += incr
+	if math.IsInf(value, 0) {
+		return &EvalResponse{
+			Result: nil,
+			Error:  diceerrors.ErrValueOutOfRange,
+		}
+	}
+	strValue := formatFloat(value, true)
+
+	oType, oEnc := deduceTypeEncoding(strValue)
+
+	// Remove the trailing decimal for interger values
+	// to maintain consistency with redis
+	obj.Value = strings.TrimSuffix(strValue, ".0")
+	obj.TypeEncoding = oType | oEnc
+
+	return &EvalResponse{
+		Result: strValue,
+		Error:  nil,
+	}
 }
