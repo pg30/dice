@@ -318,7 +318,15 @@ func evalSETEX(args []string, store *dstore.Store) *EvalResponse {
 	return evalSET(newArgs, store)
 }
 
-func evalINCRNew(args []string, store *dstore.Store) *EvalResponse {
+// evalINCR increments the value of the specified key in args by 1,
+// if the key exists and the value is integer format.
+// The key should be the only param in args.
+// If the key does not exist, new key is created with value 0,
+// the value of the new key is then incremented.
+// The value for the queried key should be of integer format,
+// if not evalINCR returns encoded error response.
+// evalINCR returns the incremented value for the key if there are no errors.
+func evalINCR(args []string, store *dstore.Store) *EvalResponse {
 	if len(args) != 1 {
 		return &EvalResponse{
 			Result: nil,
@@ -326,10 +334,18 @@ func evalINCRNew(args []string, store *dstore.Store) *EvalResponse {
 		}
 	}
 
-	return incrDecrCmdNew(args, 1, store)
+	return incrDecrCmd(args, 1, store)
 }
 
-func evalINCRBYNew(args []string, store *dstore.Store) *EvalResponse {
+// INCRBY increments the value of the specified key in args by increment integer specified,
+// if the key exists and the value is integer format.
+// The key and the increment integer should be the only param in args.
+// If the key does not exist, new key is created with value 0,
+// the value of the new key is then incremented.
+// The value for the queried key should be of integer format,
+// if not INCRBY returns error response.
+// evalINCRBY returns the incremented value for the key if there are no errors.
+func evalINCRBY(args []string, store *dstore.Store) *EvalResponse {
 	if len(args) != 2 {
 		return &EvalResponse{
 			Result: nil,
@@ -344,20 +360,36 @@ func evalINCRBYNew(args []string, store *dstore.Store) *EvalResponse {
 			Error:  diceerrors.ErrIntegerOutOfRange,
 		}
 	}
-	return incrDecrCmdNew(args, incrAmount, store)
+	return incrDecrCmd(args, incrAmount, store)
 }
 
-func evalDECRNew(args []string, store *dstore.Store) *EvalResponse {
+// evalDECR decrements the value of the specified key in args by 1,
+// if the key exists and the value is integer format.
+// The key should be the only param in args.
+// If the key does not exist, new key is created with value 0,
+// the value of the new key is then decremented.
+// The value for the queried key should be of integer format,
+// if not evalDECR returns error response.
+// evalDECR returns the decremented value for the key if there are no errors.
+func evalDECR(args []string, store *dstore.Store) *EvalResponse {
 	if len(args) != 1 {
 		return &EvalResponse{
 			Result: nil,
 			Error:  diceerrors.ErrWrongArgumentCount("DECR"),
 		}
 	}
-	return incrDecrCmdNew(args, -1, store)
+	return incrDecrCmd(args, -1, store)
 }
 
-func evalDECRBYNew(args []string, store *dstore.Store) *EvalResponse {
+// evalDECRBY decrements the value of the specified key in args by the specified decrement,
+// if the key exists and the value is integer format.
+// The key should be the first parameter in args, and the decrement should be the second parameter.
+// If the key does not exist, new key is created with value 0,
+// the value of the new key is then decremented by specified decrement.
+// The value for the queried key should be of integer format,
+// if not evalDECRBY returns an error response.
+// evalDECRBY returns the decremented value for the key after applying the specified decrement if there are no errors.
+func evalDECRBY(args []string, store *dstore.Store) *EvalResponse {
 	if len(args) != 2 {
 		return &EvalResponse{
 			Result: nil,
@@ -371,29 +403,37 @@ func evalDECRBYNew(args []string, store *dstore.Store) *EvalResponse {
 			Error:  diceerrors.ErrIntegerOutOfRange,
 		}
 	}
-	return incrDecrCmdNew(args, -decrAmount, store)
+	return incrDecrCmd(args, -decrAmount, store)
 }
 
-func incrDecrCmdNew(args []string, incr int64, store *dstore.Store) *EvalResponse {
+func incrDecrCmd(args []string, incr int64, store *dstore.Store) *EvalResponse {
 	key := args[0]
 	obj := store.Get(key)
 	if obj == nil {
-		obj = store.NewObj(int64(0), -1, object.ObjTypeInt, object.ObjEncodingInt)
+		obj = store.NewObj(int64(incr), -1, object.ObjTypeInt, object.ObjEncodingInt)
 		store.Put(key, obj)
+		return &EvalResponse{
+			Result: int64(incr),
+			Error:  nil,
+		}
 	}
 
-	// TODO: return wrong type errors for types other than KV
-	if err := object.AssertType(obj.TypeEncoding, object.ObjTypeInt); err != nil {
+	// if the type is not KV : return wrong type error
+	// if the encoding or type is not int : return value is not an int error
+	errStr := object.AssertType(obj.TypeEncoding, object.ObjTypeString)
+	if errStr == nil {
 		return &EvalResponse{
 			Result: nil,
 			Error:  diceerrors.ErrIntegerOutOfRange,
 		}
 	}
 
-	if err := object.AssertEncoding(obj.TypeEncoding, object.ObjEncodingInt); err != nil {
+	errTypeInt := object.AssertType(obj.TypeEncoding, object.ObjTypeInt)
+	errEncInt := object.AssertEncoding(obj.TypeEncoding, object.ObjEncodingInt)
+	if errEncInt != nil || errTypeInt != nil {
 		return &EvalResponse{
 			Result: nil,
-			Error:  diceerrors.ErrIntegerOutOfRange,
+			Error:  diceerrors.ErrWrongTypeOperation,
 		}
 	}
 
@@ -414,7 +454,14 @@ func incrDecrCmdNew(args []string, incr int64, store *dstore.Store) *EvalRespons
 	}
 }
 
-func evalINCRBYFLOATNew(args []string, store *dstore.Store) *EvalResponse {
+// evalINCRBYFLOAT increments the value of the  key in args by the specified increment,
+// if the key exists and the value is a number.
+// The key should be the first parameter in args, and the increment should be the second parameter.
+// If the key does not exist, a new key is created with increment's value.
+// If the value at the key is a string, it should be parsable to float64,
+// if not evalINCRBYFLOAT returns an  error response.
+// evalINCRBYFLOAT returns the incremented value for the key after applying the specified increment if there are no errors.
+func evalINCRBYFLOAT(args []string, store *dstore.Store) *EvalResponse {
 	if len(args) != 2 {
 		return &EvalResponse{
 			Result: nil,
@@ -428,10 +475,10 @@ func evalINCRBYFLOATNew(args []string, store *dstore.Store) *EvalResponse {
 			Error:  diceerrors.ErrInvalidNumberFormat,
 		}
 	}
-	return incrByFloatCmdNew(args, incr, store)
+	return incrByFloatCmd(args, incr, store)
 }
 
-func incrByFloatCmdNew(args []string, incr float64, store *dstore.Store) *EvalResponse {
+func incrByFloatCmd(args []string, incr float64, store *dstore.Store) *EvalResponse {
 	key := args[0]
 	obj := store.Get(key)
 
@@ -471,11 +518,13 @@ func incrByFloatCmdNew(args []string, incr float64, store *dstore.Store) *EvalRe
 	}
 	strValue := formatFloat(value, true)
 
+	// Remove the trailing decimal for integer values
+	// to maintain consistency with redis
+	strValue = strings.TrimSuffix(strValue, ".0")
+
 	oType, oEnc := deduceTypeEncoding(strValue)
 
-	// Remove the trailing decimal for interger values
-	// to maintain consistency with redis
-	obj.Value = strings.TrimSuffix(strValue, ".0")
+	obj.Value = strValue
 	obj.TypeEncoding = oType | oEnc
 
 	return &EvalResponse{
