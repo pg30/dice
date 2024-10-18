@@ -327,14 +327,14 @@ func (s *AsyncServer) executeCommandToBuffer(diceDBCmd *cmd.DiceDBCmd, buf *byte
 }
 
 func readCommands(c io.ReadWriter) (*cmd.RedisCmds, bool, error) {
-	var hasABORT = false
+	hasABORT := false
 	rp := clientio.NewRESPParser(c)
 	values, err := rp.DecodeMultiple()
 	if err != nil {
 		return nil, false, err
 	}
 
-	var cmds = make([]*cmd.DiceDBCmd, 0)
+	cmds := make([]*cmd.DiceDBCmd, 0)
 	for _, value := range values {
 		arrayValue, ok := value.([]interface{})
 		if !ok {

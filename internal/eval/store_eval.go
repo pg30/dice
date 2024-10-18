@@ -1,6 +1,7 @@
 package eval
 
 import (
+	"fmt"
 	"math"
 	"strconv"
 	"strings"
@@ -407,6 +408,7 @@ func evalDECRBY(args []string, store *dstore.Store) *EvalResponse {
 }
 
 func incrDecrCmd(args []string, incr int64, store *dstore.Store) *EvalResponse {
+	fmt.Println("incrDecrCmd")
 	key := args[0]
 	obj := store.Get(key)
 	if obj == nil {
